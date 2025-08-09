@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>거래처 장비 위치 지도</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <style>
+        .map-placeholder { height: 40vh; width: 100%; background-color: #e5e7eb; border-radius: 0.5rem; margin-top: 1rem; }
+        .loader { border: 8px solid #f3f3f3; border-top: 8px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1.5s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .details-table { width: 100%; margin-top: 12px; font-size: 14px; }
+        .details-table th, .details-table td { padding: 8px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+        .details-table th { background-color: #f9fafb; font-weight: 600; color: #4b5563; width: 100px; }
+        .copyable-address { cursor: pointer; color: #2563eb; font-weight: 500; }
+        .copyable-address:hover { text-decoration: underline; }
+        select:disabled { background-color: #f3f4f6; cursor: not-allowed; }
+        .details-content { max-height: 0; overflow: hidden; transition: max-height 0.5s ease-in-out; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans leading-normal tracking-normal">
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-4">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-800">거래처 CADCAM 장비 위치 현황(20250808)</h1>
+            <p class="text-gray-600 mt-2">필터를 선택하여 거래처 목록을 확인하세요.</p>
+        </header>
+
+        <div class="flex flex-col sm:flex-row justify-center items-center gap-4 mb-4">
+             <select id="team-filter" class="block w-full sm:w-auto bg-white border border-gray-300 hover:border-gray-500 px-4 py-2 rounded-lg shadow-md focus:outline-none focus:shadow-outline" disabled>
+                <option value="">-- 담당팀 --</option>
+            </select>
+            <select id="sido-filter" class="block w-full sm:w-auto bg-white border border-gray-300 hover:border-gray-500 px-4 py-2 rounded-lg shadow-md focus:outline-none focus:shadow-outline" disabled>
+                <option value="">-- 시/도 --</option>
+            </select>
+            <select id="sigungu-filter" class="block w-full sm:w-auto bg-white border border-gray-300 hover:border-gray-500 px-4 py-2 rounded-lg shadow-md focus:outline-none focus:shadow-outline" disabled>
+                <option value="">-- 시/군/구 --</option>
+            </select>
+             <select id="product-filter" class="block w-full sm:w-auto bg-white border border-gray-300 hover:border-gray-500 px-4 py-2 rounded-lg shadow-md focus:outline-none focus:shadow-outline" disabled>
+                <option value="">-- 제품 --</option>
+            </select>
+        </div>
+        <div id="status" class="text-center p-4 mb-4 bg-blue-100 border border-blue-400 text-blue-700 rounded-lg transition-all duration-500">
+            <div id="status-content" class="flex items-center justify-center">
+                <span id="status-text">데이터 로딩 중...</span>
+                <div id="loader" class="loader ml-3"></div> </div>
+        </div>
+        <div id="customer-list-container" class="hidden mt-6">
+            <h2 class="text-2xl font-bold text-gray-800 mb-3">검색 결과</h2>
+            <div id="customer-list" class="space-y-3">
+                </div>
+        </div>
+        <footer class="text-center mt-6 text-sm text-gray-500">
+            <p>지도 데이터 © <a href="https://www.openstreetmap.org/copyright" class="text-blue-500 hover:underline">OpenStreetMap</a> 기여자</p>
+        </footer>
+    </div>
+    <script>
+        // --- 1. 전역 변수 및 UI 요소 초기화 ---
+        const statusElement = document.getElementById('status');
+        const statusText = document.getElementById('status-text');
+        const loader = document.getElementById('loader');
+        const teamFilter = document.getElementById('team-filter');
+        const sidoFilter = document.getElementById('sido-filter');
+        const sigunguFilter = document.getElementById('sigungu-filter');
+        const productFilter = document.getElementById('product-filter');
+        const customerListContainer = document.getElementById('customer-list-container');
+        const customerList = document.getElementById('customer-list');
+
+        let allCustomerData = [];
+        let activeMap = null;
+
+        // --- 2. CSV 데이터 영역은 삭제 ---
+
+        // --- 3. 함수 정의 ---
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        function copyToClipboard(text, element) {
+            if (!text || text.trim() === 'N/A') return;
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                const originalText = element.innerHTML;
+                element.innerHTML = '<b>복사 완료! ✅</b>';
+                element.style.color = '#16a34a';
+                setTimeout(() => {
+                    element.innerHTML = originalText;
+                    element.style.color = '';
+                }, 2000);
+            } catch (err) {
+                console.error('클립보드 복사 실패:', err);
+            }
+            document.body.removeChild(textArea);
+        }
+
+        function createDetailsContent(customer, index) {
+            const phoneHtml = customer.phone
+                ? `<td class="copyable-address" onclick="copyToClipboard('${customer.phone}', this)">${customer.phone} 📋</td>`
+                : `<td>N/A</td>`;
+
+            return `
+                <table class="details-table">
+                    <tr><th>담당팀</th><td>${customer.sTerritory}</td></tr>
+                    <tr><th>주소</th><td class="copyable-address" onclick="copyToClipboard('${customer.fullAddress.replace(/'/g, "\\'")}', this)">${customer.fullAddress} 📋</td></tr>
+                    <tr><th>연락처</th>${phoneHtml}</tr>
+                    <tr><th>제품</th><td>${customer.product}</td></tr>
+                    <tr><th>제조번호</th><td>${customer.serialNumber}</td></tr>
+                    <tr><th>설치일자</th><td>${customer.installDate}</td></tr>
+                    <tr><th>멤버쉽</th><td>${customer.membershipType || 'N/A'}</td></tr>
+                </table>
+                <div id="map-${index}" class="map-placeholder"></div>
+            `;
+        }
+
+        // 변경점: async/await를 사용하여 비동기 파일 로딩 함수로 변경
+        async function loadAndParseData() {
+            try {
+                // 'Installed Medical Device_Lab.csv' 파일을 fetch로 불러옵니다.
+                const response = await fetch('Installed Medical Device_CADCAM.csv');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const csvData = await response.text();
+
+                const rows = csvData.trim().split('\n').slice(1);
+                allCustomerData = rows.map(rowStr => {
+                    const lastCommaIndex = rowStr.lastIndexOf(',');
+                    if (lastCommaIndex === -1) return null;
+
+                    const sTerritory = rowStr.substring(lastCommaIndex + 1).trim();
+                    if (!['EAST', 'WEST', 'SUPPORT'].includes(sTerritory)) return null;
+
+                    const mainDataStr = rowStr.substring(0, lastCommaIndex);
+                    const cols = mainDataStr.split(',');
+
+                    if (cols.length < 11) return null;
+
+                    const addressEndIndex = 4 + (cols.length - 11);
+                    const detailAddress = cols.slice(4, addressEndIndex + 1).join(',').trim();
+                    
+                    const customer = {
+                        name: cols[0].trim(),
+                        membershipType: cols[1].trim(),
+                        sido: cols[2].trim(),
+                        sigungu: cols[3].trim(),
+                        detailAddress: detailAddress,
+                        phone: cols[addressEndIndex + 1].trim(),
+                        product: cols[addressEndIndex + 2].trim(),
+                        ref: cols[addressEndIndex + 3].trim(),
+                        serialNumber: cols[addressEndIndex + 4].trim(),
+                        installDate: cols[addressEndIndex + 5].trim(),
+                        axCode: cols[addressEndIndex + 6].trim(),
+                        sTerritory: sTerritory,
+                    };
+                    
+                    customer.fullAddress = `${customer.sido} ${customer.sigungu} ${customer.detailAddress}`.trim().replace(/\s+/g, ' ');
+                    
+                    return customer;
+                }).filter(Boolean);
+                
+                // 데이터 로딩 성공 후 필터 채우기
+                const territories = [...new Set(allCustomerData.map(c => c.sTerritory))].sort();
+                teamFilter.innerHTML = '<option value="">-- 담당팀 --</option>';
+                teamFilter.innerHTML += territories.map(t => {
+                    const count = allCustomerData.filter(c => c.sTerritory === t).length;
+                    return `<option value="${t}">${t} (${count})</option>`;
+                }).join('');
+
+                // 필터 활성화 및 상태 메시지 변경
+                teamFilter.disabled = false;
+                statusText.textContent = '담당팀을 선택하여 검색을 시작하세요.';
+                loader.classList.add('hidden');
+
+            } catch (error) {
+                console.error("데이터 로딩 실패:", error);
+                statusText.textContent = '데이터를 불러오는 중 오류가 발생했습니다. 파일을 확인해주세요.';
+                loader.classList.add('hidden');
+                // 오류 발생 시 모든 필터 비활성화 유지
+                [teamFilter, sidoFilter, sigunguFilter, productFilter].forEach(f => f.disabled = true);
+            }
+        }
+
+        function displayCustomerList(customers) {
+            const listTitle = document.querySelector('#customer-list-container h2');
+            customerList.innerHTML = '';
+            
+            statusElement.classList.add('hidden');
+            customerListContainer.classList.remove('hidden');
+
+            if (customers.length === 0) {
+                listTitle.textContent = '검색 결과';
+                statusText.textContent = '해당 조건의 거래처가 없습니다.';
+                statusElement.classList.remove('hidden');
+                customerListContainer.classList.add('hidden');
+                return;
+            }
+
+            listTitle.textContent = `검색 결과 (${customers.length}개)`;
+
+            customers.forEach((customer, index) => {
+                const card = document.createElement('div');
+                card.className = 'p-4 bg-white rounded-lg shadow-md';
+                const customerJson = JSON.stringify(customer);
+
+                card.innerHTML = `
+                    <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                        <div class="flex-grow">
+                            <p class="font-bold text-lg text-blue-800">${index + 1}. ${customer.name}</p>
+                            <p class="text-sm text-gray-600 mt-1">${customer.fullAddress}</p>
+                        </div>
+                        <button class="details-btn bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md w-full sm:w-auto transition-colors duration-200" data-customer='${customerJson}' data-index="${index}">
+                            상세정보
+                        </button>
+                    </div>
+                    <div class="details-content" id="details-${index}">
+                        ${createDetailsContent(customer, index)}
+                    </div>
+                `;
+                customerList.appendChild(card);
+            });
+        }
+
+        async function showMapInDetails(customer, mapId, buttonElement) {
+            if (activeMap) {
+                activeMap.remove();
+                activeMap = null;
+            }
+
+            const originalButtonText = buttonElement.textContent;
+            buttonElement.textContent = '위치 찾는 중...';
+            buttonElement.disabled = true;
+
+            const mapElement = document.getElementById(mapId);
+            mapElement.innerHTML = '';
+
+            const coreDetailAddress = customer.detailAddress.split(',')[0].trim().replace(/\(.*\)/g, '').trim();
+            const addressForSearch = `${customer.sido} ${customer.sigungu} ${coreDetailAddress}`;
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addressForSearch)}`;
+
+            try {
+                await sleep(500);
+                const response = await fetch(url);
+                if (!response.ok) throw new Error('Network response was not ok');
+                const data = await response.json();
+
+                activeMap = L.map(mapId);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(activeMap);
+
+                if (data && data.length > 0) {
+                    const { lat, lon } = data[0];
+                    L.marker([lat, lon]).addTo(activeMap).bindPopup(customer.name).openPopup();
+                    activeMap.setView([lat, lon], 16);
+                } else {
+                    alert(`'${customer.name}'의 위치를 찾을 수 없습니다.\n(검색주소: ${addressForSearch})`);
+                    activeMap.setView([36.5, 127.5], 7);
+                }
+            } catch (error) {
+                console.error('Geocoding error:', error);
+                alert('위치 검색 중 오류가 발생했습니다.');
+            } finally {
+                buttonElement.textContent = originalButtonText;
+                buttonElement.disabled = false;
+            }
+        }
+
+        // --- 5. 이벤트 리스너 ---
+        teamFilter.addEventListener('change', () => {
+            const selectedTeam = teamFilter.value;
+            
+            sidoFilter.innerHTML = '<option value="">-- 시/도 --</option>';
+            sidoFilter.disabled = true;
+            sigunguFilter.innerHTML = '<option value="">-- 시/군/구 --</option>';
+            sigunguFilter.disabled = true;
+            productFilter.innerHTML = '<option value="">-- 제품 --</option>';
+            productFilter.disabled = true;
+
+            if (selectedTeam) {
+                const teamCustomers = allCustomerData.filter(c => c.sTerritory === selectedTeam);
+                const sidos = [...new Set(teamCustomers.map(c => c.sido))].sort();
+                sidoFilter.innerHTML += sidos.map(s => {
+                    const count = teamCustomers.filter(c => c.sido === s).length;
+                    return `<option value="${s}">${s} (${count})</option>`;
+                }).join('');
+                sidoFilter.disabled = false;
+                displayCustomerList(teamCustomers);
+            } else {
+                customerListContainer.classList.add('hidden');
+                statusElement.classList.remove('hidden');
+                statusText.textContent = '담당팀을 선택하여 검색을 시작하세요.';
+            }
+        });
+
+        sidoFilter.addEventListener('change', () => {
+            const selectedTeam = teamFilter.value;
+            const selectedSido = sidoFilter.value;
+
+            sigunguFilter.innerHTML = '<option value="">-- 시/군/구 --</option>';
+            sigunguFilter.disabled = true;
+            productFilter.innerHTML = '<option value="">-- 제품 --</option>';
+            productFilter.disabled = true;
+
+            let filteredData = allCustomerData.filter(c => c.sTerritory === selectedTeam);
+
+            if (selectedSido) {
+                filteredData = filteredData.filter(c => c.sido === selectedSido);
+                const sigungus = [...new Set(filteredData.map(c => c.sigungu))].sort();
+                sigunguFilter.innerHTML += sigungus.map(s => {
+                    const count = filteredData.filter(c => c.sigungu === s).length;
+                    return `<option value="${s}">${s} (${count})</option>`;
+                }).join('');
+                sigunguFilter.disabled = false;
+            }
+            displayCustomerList(filteredData);
+        });
+
+        sigunguFilter.addEventListener('change', () => {
+            const selectedTeam = teamFilter.value;
+            const selectedSido = sidoFilter.value;
+            const selectedSigungu = sigunguFilter.value;
+
+            productFilter.innerHTML = '<option value="">-- 제품 --</option>';
+            productFilter.disabled = true;
+
+            let filteredData = allCustomerData.filter(c => 
+                c.sTerritory === selectedTeam && 
+                c.sido === selectedSido
+            );
+
+            if (selectedSigungu) {
+                filteredData = filteredData.filter(c => c.sigungu === selectedSigungu);
+                const products = [...new Set(filteredData.map(c => c.product))].sort();
+                productFilter.innerHTML += products.map(p => {
+                    const count = filteredData.filter(c => c.product === p).length;
+                    return `<option value="${p}">${p} (${count})</option>`;
+                }).join('');
+                productFilter.disabled = false;
+            }
+            displayCustomerList(filteredData);
+        });
+
+        productFilter.addEventListener('change', () => {
+            const selectedTeam = teamFilter.value;
+            const selectedSido = sidoFilter.value;
+            const selectedSigungu = sigunguFilter.value;
+            const selectedProduct = productFilter.value;
+
+            let filteredData = allCustomerData.filter(c => 
+                c.sTerritory === selectedTeam && 
+                c.sido === selectedSido &&
+                c.sigungu === sigunguFilter.value
+            );
+
+            if (selectedProduct) {
+                filteredData = filteredData.filter(c => c.product === selectedProduct);
+            }
+            displayCustomerList(filteredData);
+        });
+
+        customerList.addEventListener('click', function(e) {
+            const button = e.target.closest('.details-btn');
+            if (button) {
+                const index = button.dataset.index;
+                const detailsContent = document.getElementById(`details-${index}`);
+                const customerData = JSON.parse(button.dataset.customer);
+
+                document.querySelectorAll('.details-content').forEach(content => {
+                    if (content.id !== `details-${index}`) {
+                        content.style.maxHeight = null;
+                    }
+                });
+
+                if (detailsContent.style.maxHeight) {
+                    detailsContent.style.maxHeight = null;
+                    if(activeMap) {
+                        activeMap.remove();
+                        activeMap = null;
+                    }
+                } else {
+                    detailsContent.style.maxHeight = detailsContent.scrollHeight + "px";
+                    showMapInDetails(customerData, `map-${index}`, button);
+                }
+            }
+        });
+
+        // --- 6. 최초 실행 ---
+        // 변경점: 페이지가 로드되면 데이터 로딩 함수를 호출합니다.
+        document.addEventListener('DOMContentLoaded', loadAndParseData);
+    </script>
+</body>
+</html>

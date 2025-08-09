@@ -1,4 +1,4 @@
-# [덴츠플라이시로나 코리아 기술부](https://dscorea.github.io/DSKTech/)
+# [DSK Tech Div.](https://dscorea.github.io/DSKTech/)
 
 ## 전국 장비 설치 현황
 

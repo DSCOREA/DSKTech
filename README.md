@@ -1,4 +1,6 @@
-# [DSKTech](https://dscorea.github.io/DSKTech/)
+# [덴츠플라이시로나 코리아 기술부](https://dscorea.github.io/DSKTech/)
+
+## 전국 장비 설치 현황
 
 [Installed Medical Device_CAD/CAM](Installed Medical Device_CADCAM.html)
 

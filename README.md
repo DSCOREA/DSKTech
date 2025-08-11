@@ -1,4 +1,4 @@
-## 전국 장비 설치 현황
+## 📌 전국 장비 설치 현황
 
 >[Installed Medical Device_CAD/CAM](Installed Medical Device_CADCAM.html)
 >

@@ -99,15 +99,31 @@
             document.body.removeChild(textArea);
         }
 
+        // ============================================================== //
+        // ▼▼▼▼▼▼▼▼▼▼▼▼▼ 네이버 지도 링크가 포함된 함수 ▼▼▼▼▼▼▼▼▼▼▼▼▼ //
+        // ============================================================== //
         function createDetailsContent(customer, index) {
             const phoneHtml = customer.phone
                 ? `<td class="copyable-address" onclick="copyToClipboard('${customer.phone}', this)">${customer.phone} 📋</td>`
                 : `<td>N/A</td>`;
 
+            // 네이버 지도 검색 URL 생성
+            const naverMapUrl = `https://map.naver.com/p/search/${encodeURIComponent(customer.fullAddress)}`;
+
             return `
                 <table class="details-table">
                     <tr><th>담당팀</th><td>${customer.sTerritory}</td></tr>
-                    <tr><th>주소</th><td class="copyable-address" onclick="copyToClipboard('${customer.fullAddress.replace(/'/g, "\\'")}', this)">${customer.fullAddress} 📋</td></tr>
+                    <tr>
+                        <th>주소</th>
+                        <td>
+                            <span class="copyable-address" onclick="copyToClipboard('${customer.fullAddress.replace(/'/g, "\\'")}', this)">${customer.fullAddress} 📋</span>
+                            
+                            {/* 네이버 지도 링크 버튼 추가 */}
+                            <a href="${naverMapUrl}" target="_blank" rel="noopener noreferrer" class="ml-2 text-white bg-green-600 hover:bg-green-700 text-xs font-bold py-1 px-2 rounded-md transition-colors duration-200" style="text-decoration: none;">
+                                Naver 지도
+                            </a>
+                        </td>
+                    </tr>
                     <tr><th>연락처</th>${phoneHtml}</tr>
                     <tr><th>제품</th><td>${customer.product}</td></tr>
                     <tr><th>제조번호</th><td>${customer.serialNumber}</td></tr>
@@ -120,6 +136,7 @@
 
         async function loadAndParseData() {
             try {
+                // 'Installed Medical Device_Lab.csv' 파일을 fetch로 불러옵니다.
                 const response = await fetch('csv/Installed Medical Device_Lab.csv');
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -221,9 +238,6 @@
             });
         }
 
-        // ============================================================== //
-        // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 수정된 함수 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ //
-        // ============================================================== //
         async function showMapInDetails(customer, mapId, buttonElement) {
             if (activeMap) {
                 activeMap.remove();
@@ -235,7 +249,7 @@
             buttonElement.disabled = true;
 
             const mapElement = document.getElementById(mapId);
-            mapElement.innerHTML = ''; // 지도 컨테이너 초기화
+            mapElement.innerHTML = ''; 
 
             const coreDetailAddress = customer.detailAddress.split(',')[0].trim().replace(/\(.*\)/g, '').trim();
             const addressForSearch = `${customer.sido} ${customer.sigungu} ${coreDetailAddress}`;
@@ -248,21 +262,18 @@
                 const data = await response.json();
 
                 if (data && data.length > 0) {
-                    // 위치 찾기 성공
                     activeMap = L.map(mapId);
                     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(activeMap);
                     const { lat, lon } = data[0];
                     L.marker([lat, lon]).addTo(activeMap).bindPopup(customer.name).openPopup();
                     activeMap.setView([lat, lon], 16);
                 } else {
-                    // 위치 찾기 실패 시, 지도 영역에 메시지 표시
                     mapElement.innerHTML = `<div class="flex items-center justify-center h-full text-gray-500 bg-gray-200 rounded-lg">
-                                                '${customer.name}'의 위치를 찾을 수 없습니다. 주소를 복사하여 포털 또는 내비에 입력해보세요.
+                                                '${customer.name}'의 위치를 찾을 수 없습니다.
                                             </div>`;
                 }
             } catch (error) {
                 console.error('Geocoding error:', error);
-                // 네트워크 오류 등 다른 문제 발생 시, 지도 영역에 에러 메시지 표시
                 mapElement.innerHTML = `<div class="flex items-center justify-center h-full text-red-500 bg-gray-200 rounded-lg">
                                             위치 검색 중 오류가 발생했습니다.
                                         </div>`;
@@ -271,9 +282,6 @@
                 buttonElement.disabled = false;
             }
         }
-        // ============================================================== //
-        // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ 수정된 함수 ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ //
-        // ============================================================== //
 
         // --- 5. 이벤트 리스너 ---
         teamFilter.addEventListener('change', () => {
